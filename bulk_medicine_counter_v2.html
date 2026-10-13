@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>散裝藥品計數器 v2</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:15px;max-width:780px;margin:auto;background:#f3f6f8;color:#17202a;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}
+h1{font-size:1.45rem;margin:4px 0}.sub,.hint{color:#52616b;font-size:.9rem;line-height:1.55}
+.panel{background:white;border:1px solid #dbe3e8;border-radius:15px;padding:14px;margin:12px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>*{flex:1}
+button,select,input{font:inherit;border:1px solid #c7d1d8;border-radius:10px;padding:10px;background:white;color:#17202a}
+button.primary{background:#126e45;color:white;border-color:#126e45}button:disabled{opacity:.5}
+label{display:block;font-weight:650;margin:10px 0 5px}.small{font-size:.84rem;color:#52616b;line-height:1.5}
+#stage{position:relative;width:100%;background:#182028;border-radius:12px;overflow:hidden}
+video,canvas{display:block;width:100%;height:auto}video{position:relative;z-index:1}canvas{position:absolute;inset:0;z-index:2;pointer-events:none}
+.big{font-size:2.2rem;font-weight:800;color:#126e45}.status{font-size:.9rem;margin-top:9px;color:#52616b}
+.warning{background:#fff8e7;border:1px solid #efd18a;border-radius:10px;padding:11px;font-size:.88rem;line-height:1.55}
+.pill{display:inline-block;border-radius:999px;background:#e9f7ee;padding:3px 9px;font-size:.8rem;color:#126e45}
+</style></head>
+<body>
+<h1>💊 散裝藥品計數器 v2</h1>
+<p class="sub">多種形狀皆可嘗試 · 一次計算一種藥品 · 綠點標示每個疑似藥錠</p>
+<div class="panel">
+ <div class="row"><button id="start" class="primary">啟動相機</button><button id="pause" disabled>暫停分析</button><button id="reset">清除計數顯示</button></div>
+ <label for="bg">背景與藥品的明暗關係</label>
+ <select id="bg" style="width:100%">
+  <option value="dark">深色背景、淺色藥品</option><option value="light">淺色背景、深色藥品</option>
+ </select>
+ <label for="threshold">明暗分割門檻：<span id="thrLabel">中等</span></label>
+ <input id="threshold" type="range" min="35" max="220" value="105" style="width:100%">
+ <label for="minArea">最小藥品面積：<span id="areaLabel">0.10%</span></label>
+ <input id="minArea" type="range" min="2" max="60" value="10" style="width:100%">
+ <label for="morph">輪廓平滑程度</label>
+ <select id="morph" style="width:100%"><option value="3">低（保留小細節）</option><option value="5" selected>中（一般建議）</option><option value="7">高（去除小雜點，但可能合併近距離藥品）</option></select>
+ <p class="small">此版本適用圓形、橢圓形、長條形錠劑與膠囊的混合外觀，但每次仍只計算一種藥品。藥品需單層平放，與背景有明顯色差。</p>
+</div>
+<div class="panel">
+ <div id="stage"><video id="video" playsinline muted></video><canvas id="overlay"></canvas></div>
+ <div class="row" style="margin-top:12px">
+  <div><div class="small">目前疑似藥品數</div><div class="big" id="count">0</div></div>
+  <div><div class="small">品質提示</div><div id="quality" style="font-weight:700">等待相機</div></div>
+ </div>
+ <div id="status" class="status">請啟動相機並允許瀏覽器使用相機。</div>
+</div>
+<div class="panel">
+ <b>建議設定流程</b>
+ <ol class="hint">
+  <li>用霧面深色墊板放淺色藥品，或淺色墊板放深色藥品，避免反光。</li>
+  <li>手機固定在正上方，畫面包含全部藥品；盡量讓藥品彼此不接觸。</li>
+  <li>先調整明暗分割門檻，直到藥品內部被辨識、背景大部分被排除。</li>
+  <li>再調整最小面積去除灰塵與小斑點；若藥品邊緣破碎，可略微提高平滑程度。</li>
+  <li>以人工已知數量（例如 20 顆）校正設定，至少在不同位置和光線下重複測試。</li>
+ </ol>
+ <div class="warning"><b>藥品安全提醒：</b>這是以影像輪廓分割計數的輔助原型，不會辨識藥名、成分、劑量或真偽。若兩顆藥接觸、重疊、顏色與背景相近或有陰影，可能漏計或誤計。藥品調劑、給藥或庫存盤點時，請由人員逐顆核對；不可把自動結果當成唯一依據。</div>
+</div>
+<p class="small">相機影像在瀏覽器本機處理；OpenCV.js 從官方 CDN 載入。手機瀏覽器通常需要 HTTPS 網址或 localhost 才能使用相機。</p>
+<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+<script>
+const video=document.getElementById('video'),canvas=document.getElementById('overlay'),ctx=canvas.getContext('2d',{willReadFrequently:true});
+const startBtn=document.getElementById('start'),pauseBtn=document.getElementById('pause'),resetBtn=document.getElementById('reset');
+const bg=document.getElementById('bg'),thr=document.getElementById('threshold'),minArea=document.getElementById('minArea'),morph=document.getElementById('morph');
+const thrLabel=document.getElementById('thrLabel'),areaLabel=document.getElementById('areaLabel'),countEl=document.getElementById('count'),qualityEl=document.getElementById('quality'),statusEl=document.getElementById('status');
+let stream=null,running=false,paused=false,busy=false,lastRun=0,cvReady=false,src=null,gray=null,mask=null,hierarchy=null,contours=null,kernel=null,workCanvas=document.createElement('canvas'),workCtx=workCanvas.getContext('2d',{willReadFrequently:true}),stableHistory=[];
+function say(t){statusEl.textContent=t}
+function waitCV(){return new Promise((resolve,reject)=>{let n=0;const timer=setInterval(()=>{n++;if(window.cv&&cv.Mat){if(cv.Mat.ones){clearInterval(timer);cvReady=true;resolve()}else{cv.onRuntimeInitialized=()=>{clearInterval(timer);cvReady=true;resolve()}}}if(n>400){clearInterval(timer);reject(Error('OpenCV 載入逾時，請確認網路'))}},100)})}
+function freeMats(){[src,gray,mask,hierarchy,contours,kernel].forEach(x=>{try{if(x)x.delete()}catch(e){}});src=gray=mask=hierarchy=contours=kernel=null}
+function setup(){
+ freeMats();const w=video.videoWidth,h=video.videoHeight;
+ workCanvas.width=w;workCanvas.height=h;canvas.width=w;canvas.height=h;
+ const stage=document.getElementById('stage');stage.style.aspectRatio=w+'/'+h;
+ src=new cv.Mat(h,w,cv.CV_8UC4);gray=new cv.Mat();mask=new cv.Mat();hierarchy=new cv.Mat();contours=new cv.MatVector();
+ kernel=cv.Mat.ones(Number(morph.value),Number(morph.value),cv.CV_8U);
+}
+function ensureKernel(){if(kernel){kernel.delete()}const k=Number(morph.value);kernel=cv.Mat.ones(k,k,cv.CV_8U)}
+function clearMarks(){ctx.clearRect(0,0,canvas.width,canvas.height)}
+function process(){
+ if(!running){return}requestAnimationFrame(process);if(paused||busy||!video.videoWidth||performance.now()-lastRun<250)return;
+ busy=true;lastRun=performance.now();
+ try{
+  if(!src||src.cols!==video.videoWidth||src.rows!==video.videoHeight)setup();
+  workCtx.drawImage(video,0,0,workCanvas.width,workCanvas.height);
+  src.delete();src=cv.matFromImageData(workCtx.getImageData(0,0,workCanvas.width,workCanvas.height));
+  cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);
+  // Global threshold; invert polarity for dark pills on a bright mat.
+  const threshold=Number(thr.value);
+  cv.threshold(gray,mask,threshold,255,bg.value==='dark'?cv.THRESH_BINARY:cv.THRESH_BINARY_INV);
+  ensureKernel();
+  cv.morphologyEx(mask,mask,cv.MORPH_OPEN,kernel);
+  cv.morphologyEx(mask,mask,cv.MORPH_CLOSE,kernel);
+  const found=[],totalPx=video.videoWidth*video.videoHeight,minPx=totalPx*(Number(minArea.value)/10000),maxPx=totalPx*.22;
+  cv.findContours(mask,contours,hierarchy,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
+  let rejected=0;
+  for(let i=0;i<contours.size();i++){
+   const c=contours.get(i),a=cv.contourArea(c);if(a<minPx||a>maxPx){rejected++;continue}
+   const r=cv.boundingRect(c);if(r.width<7||r.height<7){rejected++;continue}
+   const ratio=r.width/r.height;if(ratio<.22||ratio>4.5){rejected++;continue}
+   const peri=cv.arcLength(c,true);if(peri<1)continue;
+   const circularity=4*Math.PI*a/(peri*peri);
+   // Accept pill-like contours: round tablets, oblong tablets and capsules.
+   if(circularity<.12){rejected++;continue}
+   const m=cv.moments(c);if(Math.abs(m.m00)<1)continue;
+   found.push({x:m.m10/m.m00,y:m.m01/m.m00,rect:r,area:a,circularity});
+  }
+  clearMarks();ctx.lineJoin='round';
+  found.forEach((p,i)=>{
+   const radius=Math.max(5,Math.min(p.rect.width,p.rect.height)*.18);
+   ctx.beginPath();ctx.arc(p.x,p.y,radius,0,Math.PI*2);ctx.fillStyle='#18e765';ctx.fill();ctx.lineWidth=Math.max(2,video.videoWidth*.0025);ctx.strokeStyle='#064b22';ctx.stroke();
+   ctx.font=`bold ${Math.max(14,video.videoWidth*.022)}px system-ui`;ctx.lineWidth=3;ctx.strokeStyle='rgba(255,255,255,.85)';ctx.strokeText(String(i+1),p.x+radius+2,p.y-radius);ctx.fillStyle='#064b22';ctx.fillText(String(i+1),p.x+radius+2,p.y-radius);
+  });
+  // Display a stability hint; count is the current-frame contour count, not cumulative.
+  stableHistory.push(found.length);if(stableHistory.length>8)stableHistory.shift();
+  const stable=stableHistory.length>=5&&stableHistory.slice(-5).every(n=>n===found.length);
+  countEl.textContent=String(found.length);
+  qualityEl.textContent=stable?'數量穩定':'校正中';
+  say(`目前偵測到 ${found.length} 個疑似輪廓。${stable?'連續數個畫面數量一致；仍請人工核對。':'若綠點未對準每顆藥，請調整門檻、最小面積或背景。'}`);
+ }catch(e){say('分析錯誤：'+e.message)}
+ finally{busy=false}
+}
+startBtn.addEventListener('click',async()=>{
+ try{
+  startBtn.disabled=true;say('載入影像處理模組…');await waitCV();say('啟動手機相機…');
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:960}},audio:false});
+  video.srcObject=stream;await video.play();setup();running=true;paused=false;pauseBtn.disabled=false;pauseBtn.textContent='暫停分析';qualityEl.textContent='校正中';say('相機已啟動，開始分析…');process();
+ }catch(e){startBtn.disabled=false;qualityEl.textContent='未啟動';say('無法啟動：'+e.message+'。請使用 HTTPS 網址、允許相機權限，並確認網路可載入 OpenCV。')}
+});
+pauseBtn.addEventListener('click',()=>{paused=!paused;pauseBtn.textContent=paused?'繼續分析':'暫停分析';qualityEl.textContent=paused?'已暫停':'校正中';if(!paused)process();else say('分析已暫停，畫面標記保留。')});
+resetBtn.addEventListener('click',()=>{stableHistory=[];countEl.textContent='0';clearMarks();say('已清除顯示；恢復分析後會重新計算目前畫面。')});
+thr.addEventListener('input',()=>{thrLabel.textContent=Number(thr.value)<75?'低':Number(thr.value)<155?'中等':'高'});
+minArea.addEventListener('input',()=>{areaLabel.textContent=(Number(minArea.value)/100).toFixed(2)+'%'});
+morph.addEventListener('change',()=>{if(cvReady&&video.videoWidth)ensureKernel()});
+bg.addEventListener('change',()=>say('明暗模式已更改；請檢查背景是否大部分被排除。'));
+window.addEventListener('beforeunload',()=>{if(stream)stream.getTracks().forEach(t=>t.stop());freeMats()});
+</script></body></html>
