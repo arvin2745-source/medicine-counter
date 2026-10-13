@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>散裝藥品計數器 v2</title>
+<title>散裝藥品計數器 v2｜接觸藥錠分離版</title>
 <style>
 *{box-sizing:border-box}body{margin:0;padding:15px;max-width:780px;margin:auto;background:#f3f6f8;color:#17202a;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}
 h1{font-size:1.45rem;margin:4px 0}.sub,.hint{color:#52616b;font-size:.9rem;line-height:1.55}
@@ -19,7 +19,7 @@ video,canvas{display:block;width:100%;height:auto}video{position:relative;z-inde
 </style></head>
 <body>
 <h1>💊 散裝藥品計數器 v2</h1>
-<p class="sub">多種形狀皆可嘗試 · 一次計算一種藥品 · 綠點標示每個疑似藥錠</p>
+<p class="sub">多種形狀皆可嘗試 · 一次計算一種藥品 · 綠點與編號標示疑似藥錠</p>
 <div class="panel">
  <div class="row"><button id="start" class="primary">啟動相機</button><button id="pause" disabled>暫停分析</button><button id="reset">清除計數顯示</button></div>
  <label for="bg">背景與藥品的明暗關係</label>
@@ -32,7 +32,11 @@ video,canvas{display:block;width:100%;height:auto}video{position:relative;z-inde
  <input id="minArea" type="range" min="2" max="60" value="10" style="width:100%">
  <label for="morph">輪廓平滑程度</label>
  <select id="morph" style="width:100%"><option value="3">低（保留小細節）</option><option value="5" selected>中（一般建議）</option><option value="7">高（去除小雜點，但可能合併近距離藥品）</option></select>
- <p class="small">此版本適用圓形、橢圓形、長條形錠劑與膠囊的混合外觀，但每次仍只計算一種藥品。藥品需單層平放，與背景有明顯色差。</p>
+ <label class="row" for="splitEnabled" style="justify-content:flex-start"><input id="splitEnabled" type="checkbox" checked style="flex:0 0 auto;width:20px;height:20px;padding:0">啟用接觸藥錠分離（距離轉換）</label>
+ <label for="splitStrength">分離強度：<span id="splitLabel">中等（5/10）</span></label>
+ <input id="splitStrength" type="range" min="1" max="10" value="5" style="width:100%">
+ <p class="small">啟用後，程式只會對較大的相連輪廓尋找多個內部中心，再嘗試分配成數顆；大小與形狀不合理時會退回原輪廓或略過。強度越高越容易切分，也越可能把單顆藥錠誤切；可隨時關閉此功能比較結果。</p>
+ <p class="small">適用圓形、橢圓形、長條形錠劑與膠囊；每次仍只計算一種藥品。藥品需單層平放，與背景有明顯色差。</p>
 </div>
 <div class="panel">
  <div id="stage"><video id="video" playsinline muted></video><canvas id="overlay"></canvas></div>
@@ -46,12 +50,12 @@ video,canvas{display:block;width:100%;height:auto}video{position:relative;z-inde
  <b>建議設定流程</b>
  <ol class="hint">
   <li>用霧面深色墊板放淺色藥品，或淺色墊板放深色藥品，避免反光。</li>
-  <li>手機固定在正上方，畫面包含全部藥品；盡量讓藥品彼此不接觸。</li>
+  <li>手機固定在正上方，畫面包含全部藥品；接觸或靠近的藥錠可開啟「接觸藥錠分離」嘗試切分。</li>
   <li>先調整明暗分割門檻，直到藥品內部被辨識、背景大部分被排除。</li>
   <li>再調整最小面積去除灰塵與小斑點；若藥品邊緣破碎，可略微提高平滑程度。</li>
-  <li>以人工已知數量（例如 20 顆）校正設定，至少在不同位置和光線下重複測試。</li>
+  <li>以人工已知數量（例如 20 顆）校正設定；若單顆藥錠被切成多份，請降低分離強度或關閉分離，再重新核對。</li>
  </ol>
- <div class="warning"><b>藥品安全提醒：</b>這是以影像輪廓分割計數的輔助原型，不會辨識藥名、成分、劑量或真偽。若兩顆藥接觸、重疊、顏色與背景相近或有陰影，可能漏計或誤計。藥品調劑、給藥或庫存盤點時，請由人員逐顆核對；不可把自動結果當成唯一依據。</div>
+ <div class="warning"><b>藥品安全提醒：</b>這是以影像輪廓分割計數的輔助原型，不會辨識藥名、成分、劑量或真偽。接觸藥錠分離是實驗性功能，接觸、重疊、顏色與背景相近或有陰影時仍可能漏計或誤計，也可能把單顆藥錠切成多份。藥品調劑、給藥或庫存盤點時，必須由人員逐顆覆核；不可用未經覆核的自動結果作正式調劑依據。</div>
 </div>
 <p class="small">相機影像在瀏覽器本機處理；OpenCV.js 從官方 CDN 載入。手機瀏覽器通常需要 HTTPS 網址或 localhost 才能使用相機。</p>
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
@@ -59,7 +63,8 @@ video,canvas{display:block;width:100%;height:auto}video{position:relative;z-inde
 const video=document.getElementById('video'),canvas=document.getElementById('overlay'),ctx=canvas.getContext('2d',{willReadFrequently:true});
 const startBtn=document.getElementById('start'),pauseBtn=document.getElementById('pause'),resetBtn=document.getElementById('reset');
 const bg=document.getElementById('bg'),thr=document.getElementById('threshold'),minArea=document.getElementById('minArea'),morph=document.getElementById('morph');
-const thrLabel=document.getElementById('thrLabel'),areaLabel=document.getElementById('areaLabel'),countEl=document.getElementById('count'),qualityEl=document.getElementById('quality'),statusEl=document.getElementById('status');
+const splitEnabled=document.getElementById('splitEnabled'),splitStrength=document.getElementById('splitStrength');
+const thrLabel=document.getElementById('thrLabel'),areaLabel=document.getElementById('areaLabel'),splitLabel=document.getElementById('splitLabel'),countEl=document.getElementById('count'),qualityEl=document.getElementById('quality'),statusEl=document.getElementById('status');
 let stream=null,running=false,paused=false,busy=false,lastRun=0,cvReady=false,src=null,gray=null,mask=null,hierarchy=null,contours=null,kernel=null,workCanvas=document.createElement('canvas'),workCtx=workCanvas.getContext('2d',{willReadFrequently:true}),stableHistory=[];
 function say(t){statusEl.textContent=t}
 function waitCV(){return new Promise((resolve,reject)=>{let n=0;const timer=setInterval(()=>{n++;if(window.cv&&cv.Mat){if(cv.Mat.ones){clearInterval(timer);cvReady=true;resolve()}else{cv.onRuntimeInitialized=()=>{clearInterval(timer);cvReady=true;resolve()}}}if(n>400){clearInterval(timer);reject(Error('OpenCV 載入逾時，請確認網路'))}},100)})}
@@ -73,6 +78,59 @@ function setup(){
 }
 function ensureKernel(){if(kernel){kernel.delete()}const k=Number(morph.value);kernel=cv.Mat.ones(k,k,cv.CV_8U)}
 function clearMarks(){ctx.clearRect(0,0,canvas.width,canvas.height)}
+// Use distance-transform peaks as tablet-center seeds. A valley check rejects flat
+// centerlines (common in a single capsule) so the optional split is less eager.
+function splitConnectedMask(binary,dist,minPx,maxPx,strength,offsetX,offsetY){
+ const w=binary.cols,h=binary.rows,bdata=binary.data,ddata=dist.data32F;
+ let maxD=0;
+ for(let i=0;i<ddata.length;i++)if(bdata[i])maxD=Math.max(maxD,ddata[i]);
+ if(maxD<3)return null;
+ const peakFloor=maxD*(0.62-0.026*strength),separationFactor=1.04-0.04*strength;
+ const valleyLimit=0.77+0.014*strength,candidates=[];
+ for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
+  const idx=y*w+x,v=ddata[idx];if(!bdata[idx]||v<peakFloor)continue;
+  let local=true;
+  for(let dy=-1;dy<=1&&local;dy++)for(let dx=-1;dx<=1;dx++)if((dx||dy)&&ddata[idx+dy*w+dx]>v+0.001){local=false;break}
+  if(local)candidates.push({x,y,d:v});
+ }
+ candidates.sort((a,b)=>b.d-a.d);
+ const seeds=[];
+ for(const p of candidates){
+  if(seeds.length>=8)break;
+  let separated=true;
+  for(const q of seeds){
+   const dx=p.x-q.x,dy=p.y-q.y,distCenters=Math.hypot(dx,dy);
+   if(distCenters<(p.d+q.d)*separationFactor){separated=false;break}
+   let valley=Math.min(p.d,q.d);
+   const steps=Math.max(4,Math.ceil(distCenters/3));
+   for(let k=1;k<steps;k++){
+    const t=k/steps,x=Math.max(0,Math.min(w-1,Math.round(q.x+dx*t))),y=Math.max(0,Math.min(h-1,Math.round(q.y+dy*t)));
+    valley=Math.min(valley,ddata[y*w+x]);
+   }
+   if(valley/Math.min(p.d,q.d)>=valleyLimit){separated=false;break}
+  }
+  if(separated)seeds.push(p);
+ }
+ if(seeds.length<2)return null;
+ const regions=seeds.map(()=>({area:0,sx:0,sy:0,minX:w,minY:h,maxX:-1,maxY:-1}));
+ for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+  const idx=y*w+x;if(!bdata[idx])continue;
+  let best=0,bestD=Infinity;
+  for(let j=0;j<seeds.length;j++){
+   const dx=x-seeds[j].x,dy=y-seeds[j].y,d=dx*dx+dy*dy;
+   if(d<bestD){bestD=d;best=j}
+  }
+  const a=regions[best];a.area++;a.sx+=x+offsetX;a.sy+=y+offsetY;
+  if(x<a.minX)a.minX=x;if(x>a.maxX)a.maxX=x;if(y<a.minY)a.minY=y;if(y>a.maxY)a.maxY=y;
+ }
+ const result=[];
+ for(const a of regions){
+  const rw=a.maxX-a.minX+1,rh=a.maxY-a.minY+1,ratio=rw/rh,fill=a.area/(rw*rh);
+  if(a.area<minPx||a.area>maxPx||rw<7||rh<7||ratio<0.22||ratio>4.5||fill<0.20)return null;
+  result.push({x:a.sx/a.area,y:a.sy/a.area,rect:{width:rw,height:rh},area:a.area});
+ }
+ return result;
+}
 function process(){
  if(!running){return}requestAnimationFrame(process);if(paused||busy||!video.videoWidth||performance.now()-lastRun<250)return;
  busy=true;lastRun=performance.now();
@@ -91,8 +149,23 @@ function process(){
   cv.findContours(mask,contours,hierarchy,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
   let rejected=0;
   for(let i=0;i<contours.size();i++){
-   const c=contours.get(i),a=cv.contourArea(c);if(a<minPx||a>maxPx){rejected++;continue}
-   const r=cv.boundingRect(c);if(r.width<7||r.height<7){rejected++;continue}
+   const c=contours.get(i),a=cv.contourArea(c),r=cv.boundingRect(c);
+   // Only larger blobs are candidates for splitting; ordinary single contours
+   // continue through the original contour filters unchanged.
+   if(splitEnabled.checked&&a>=minPx*1.65&&a<=maxPx*6){
+    let component=null,dist=null;
+    try{
+     component=cv.Mat.zeros(r.height+2,r.width+2,cv.CV_8UC1);
+     cv.drawContours(component,contours,i,new cv.Scalar(255),-1,cv.LINE_8,hierarchy,0,new cv.Point(1-r.x,1-r.y));
+     dist=new cv.Mat();cv.distanceTransform(component,dist,cv.DIST_L2,3);
+     const pieces=splitConnectedMask(component,dist,minPx,maxPx,Number(splitStrength.value),r.x-1,r.y-1);
+     if(pieces){found.push(...pieces);continue}
+    }catch(splitError){
+     // A missing/unsupported OpenCV operation falls back to the original contour path.
+    }finally{if(component)component.delete();if(dist)dist.delete()}
+   }
+   if(a<minPx||a>maxPx){rejected++;continue}
+   if(r.width<7||r.height<7){rejected++;continue}
    const ratio=r.width/r.height;if(ratio<.22||ratio>4.5){rejected++;continue}
    const peri=cv.arcLength(c,true);if(peri<1)continue;
    const circularity=4*Math.PI*a/(peri*peri);
@@ -126,6 +199,9 @@ startBtn.addEventListener('click',async()=>{
 pauseBtn.addEventListener('click',()=>{paused=!paused;pauseBtn.textContent=paused?'繼續分析':'暫停分析';qualityEl.textContent=paused?'已暫停':'校正中';if(!paused)process();else say('分析已暫停，畫面標記保留。')});
 resetBtn.addEventListener('click',()=>{stableHistory=[];countEl.textContent='0';clearMarks();say('已清除顯示；恢復分析後會重新計算目前畫面。')});
 thr.addEventListener('input',()=>{thrLabel.textContent=Number(thr.value)<75?'低':Number(thr.value)<155?'中等':'高'});
+splitStrength.addEventListener('input',()=>{const n=Number(splitStrength.value);splitLabel.textContent=(n<4?'低':n<8?'中等':'高')+'（'+n+'/10）'});
+splitEnabled.addEventListener('change',()=>say(splitEnabled.checked?'已啟用接觸藥錠分離；請留意單顆藥錠可能誤切。':'已關閉分離，回到原本輪廓計數方式。'));
+
 minArea.addEventListener('input',()=>{areaLabel.textContent=(Number(minArea.value)/100).toFixed(2)+'%'});
 morph.addEventListener('change',()=>{if(cvReady&&video.videoWidth)ensureKernel()});
 bg.addEventListener('change',()=>say('明暗模式已更改；請檢查背景是否大部分被排除。'));
